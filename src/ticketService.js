@@ -131,3 +131,30 @@ export function getTicketById(ticketId) {
     );
   });
 }
+
+export function listTicketsByUserAndStatus(userId, status) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      `SELECT * FROM tickets WHERE user_id = ? AND status = ? ORDER BY created_at DESC`,
+      [userId, status],
+      (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows || []);
+      }
+    );
+  });
+}
+
+export function listTicketsByUser(userId) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      `SELECT * FROM tickets WHERE user_id = ? ORDER BY created_at DESC`,
+      [userId],
+      (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows || []);
+      }
+    );
+  });
+}
+
