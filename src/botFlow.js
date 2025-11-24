@@ -24,6 +24,7 @@ bot.start(async (ctx) => {
     mainMenuKeyboard
   );
 });
+
 bot.command('chatid', async (ctx) => {
   await ctx.reply(`Chat ID: ${ctx.chat.id}`);
   console.log("CHAT ID:", ctx.chat.id);
@@ -201,6 +202,7 @@ bot.on(['photo', 'document'], async (ctx, next) => {
 // end file handling
 
 // Якщо користувач пропускає додавання файлу
+
 bot.action('FILE_SKIP', async (ctx) => {
   const { mode, ticketDraft } = ctx.session || {};
   if (mode !== 'create_ticket') {
