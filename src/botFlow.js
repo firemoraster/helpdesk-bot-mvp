@@ -58,6 +58,22 @@ bot.action('VIEW_TICKETS_MENU', async (ctx) => {
   return ctx.reply('Оберіть список своїх тікетів:', ticketsMenuKeyboard);
 });
 
+// натиснута кнопка "Створити тікет"
+bot.action('CREATE_TICKET', async (ctx) => {
+  // reset and prepare session for ticket creation
+  resetSession(ctx);
+  ctx.session.mode = 'create_ticket';
+  ctx.session.step = 'description';
+  ctx.session.ticketDraft = {
+    description: '',
+    category: null,
+    files: []
+  };
+
+  await ctx.answerCbQuery();
+  await ctx.reply('📝 Опишіть, будь ласка, вашу проблему максимально детально.');
+});
+
 // helper to format tickets list
 function formatTicketsList(tickets) {
   if (!tickets || tickets.length === 0) return 'Тікетів не знайдено.';
