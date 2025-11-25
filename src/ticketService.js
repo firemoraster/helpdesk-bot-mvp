@@ -158,3 +158,16 @@ export function listTicketsByUser(userId) {
   });
 }
 
+export function listTicketsByUsername(username) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      `SELECT * FROM tickets WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ? ORDER BY created_at DESC`,
+      [`%${username}%`, `%${username}%`, `%${username}%`],
+      (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows || []);
+      }
+    );
+  });
+}
+

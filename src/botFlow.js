@@ -1,7 +1,8 @@
 import { Telegraf, session } from 'telegraf';
 import { BOT_TOKEN, SUPPORT_CHAT_ID } from './config.js';
-import { mainMenuKeyboard, categoryKeyboard, ticketStatusKeyboard, fileKeyboard, ticketsFilterKeyboard, ticketChangeKeyboard } from './keyboards.js';
-import { createTicket, updateTicketStatus, setSupportMessageId, getTicketById, listTicketsByUserAndStatus, listTicketsByUser } from './ticketService.js';
+import { mainMenuKeyboard, categoryKeyboard, ticketStatusKeyboard, fileKeyboard, ticketsMenuKeyboard, ticketChangeKeyboard, adminMenuKeyboard, adminStartKeyboard, ADMIN_IDS } from './keyboards.js';
+import { createTicket, updateTicketStatus, setSupportMessageId, getTicketById, listTicketsByUserAndStatus, listTicketsByUser, listTicketsByUsername } from './ticketService.js';
+import { getDb } from './db.js';
 
 export const bot = new Telegraf(BOT_TOKEN);
 
@@ -13,16 +14,19 @@ function resetSession(ctx) {
   ctx.session = {
     mode: null,
     step: null,
-    ticketDraft: null
+    ticketDraft: null,
+    adminSearching: false // додаємо це поле
   };
 }
 
 bot.start(async (ctx) => {
   resetSession(ctx);
-  await ctx.reply(
-    '👋 Вітаємо в технічній підтримці!\nЩоб створити запит, натисніть кнопку нижче.',
-    mainMenuKeyboard
-  );
+  const isAdmin = ADMIN_IDS.includes(ctx.from.id);
+  const keyboard = isAdmin ? adminStartKeyboard : mainMenuKeyboard;
+  const message = isAdmin 
+    ? '👋 Вітаємо, адміністратор!\nОберіть дію:'
+    : '👋 Вітаємо в технічній підтримці!\nЩоб створити запит, натисніть кнопку нижче.';
+  await ctx.reply(message, keyboard);
 });
 
 bot.command('chatid', async (ctx) => {
@@ -30,10 +34,28 @@ bot.command('chatid', async (ctx) => {
   console.log("CHAT ID:", ctx.chat.id);
 });
 
-// Показати меню фільтрів для перегляду своїх тікетів
+// Admin panel
+bot.action('ADMIN_PANEL', async (ctx) => {
+  await ctx.answerCbQuery();
+  
+  if (!ADMIN_IDS.includes(ctx.from.id)) {
+    return ctx.reply('Немає доступу');
+  }
+  await ctx.reply('📊 Адмін-панель:', adminMenuKeyboard);
+});
+
+// Admin command
+bot.command('admin', async (ctx) => {
+  if (!ADMIN_IDS.includes(ctx.from.id)) {
+    return ctx.reply('Немає доступу');
+  }
+  await ctx.reply('📊 Адмін-панель:', adminMenuKeyboard);
+});
+
+// Show menu to view own tickets
 bot.action('VIEW_TICKETS_MENU', async (ctx) => {
   await ctx.answerCbQuery();
-  return ctx.reply('Оберіть список тікетів для перегляду:', ticketsFilterKeyboard);
+  return ctx.reply('Оберіть список своїх тікетів:', ticketsMenuKeyboard);
 });
 
 // helper to format tickets list
@@ -56,25 +78,119 @@ function formatTicketsList(tickets) {
     .join('\n');
 }
 
-
-// натиснута кнопка "Створити тікет"
-bot.action('CREATE_TICKET', async (ctx) => {
-  resetSession(ctx);
-  ctx.session.mode = 'create_ticket';
-  ctx.session.step = 'description';
-  ctx.session.ticketDraft = {
-    description: '',
-    category: null,
-    files: []
-  };
-
+// Admin: search tickets by user
+bot.action('ADMIN_USER_SEARCH', async (ctx) => {
   await ctx.answerCbQuery();
-  await ctx.reply('📝 Опишіть, будь ласка, вашу проблему максимально детально.');
+  
+  if (!ADMIN_IDS.includes(ctx.from.id)) {
+    return ctx.reply('Немає доступу');
+  }
+
+  // Initialize session with proper structure
+  if (!ctx.session) {
+    ctx.session = {
+      mode: null,
+      step: null,
+      ticketDraft: null,
+      adminSearching: false
+    };
+  }
+
+  // Set admin searching mode
+  ctx.session.adminSearching = true;
+  
+  console.log('Admin search initiated, adminSearching set to:', ctx.session.adminSearching);
+  
+  await ctx.reply('🔍 Введіть нік, ім\'я або ID користувача:');
 });
 
-// обробка тексту під час створення тікета
+// Handle search input for admin search - MUST BE BEFORE generic text handler
+bot.on('text', async (ctx, next) => {
+  // Only handle messages in private chats (direct messages to bot)
+  if (ctx.chat.type !== 'private') {
+    return next();
+  }
+
+  // Initialize session if it doesn't exist
+  if (!ctx.session) {
+    ctx.session = {
+      mode: null,
+      step: null,
+      ticketDraft: null,
+      adminSearching: false
+    };
+  }
+
+  console.log('Text message received, adminSearching:', ctx.session.adminSearching, 'isAdmin:', ADMIN_IDS.includes(ctx.from.id));
+
+  // Handle admin search first, before anything else
+  if (ctx.session.adminSearching && ADMIN_IDS.includes(ctx.from.id)) {
+    console.log('Processing admin search for query:', ctx.message.text);
+    let searchQuery = ctx.message.text.trim();
+    
+    // Remove @ symbol if present
+    if (searchQuery.startsWith('@')) {
+      searchQuery = searchQuery.substring(1);
+    }
+    
+    try {
+      let tickets = [];
+      let searchType = '';
+
+      // Try to parse as ID first
+      const userId = parseInt(searchQuery, 10);
+      if (!isNaN(userId) && userId > 0) {
+        console.log('Searching by user ID:', userId);
+        tickets = await listTicketsByUser(userId);
+        searchType = `ID ${userId}`;
+      } else {
+        // Search by username, first_name, or last_name
+        console.log('Searching by username/name:', searchQuery);
+        tickets = await listTicketsByUsername(searchQuery);
+        console.log('Search returned', tickets?.length || 0, 'tickets');
+        searchType = `"${searchQuery}"`;
+      }
+
+      // Reset searching state
+      ctx.session.adminSearching = false;
+
+      if (!tickets || tickets.length === 0) {
+        console.log('No tickets found for search');
+        return ctx.reply(`📭 Тікетів для користувача ${searchType} не знайдено.`);
+      }
+
+      console.log('Found', tickets.length, 'tickets, formatting response...');
+
+      let message = `📋 <b>Тікети користувача ${searchType}:</b>\n\n`;
+      for (const ticket of tickets) {
+        const owner = ticket.username ? `@${ticket.username}` : ((ticket.first_name || '') + ' ' + (ticket.last_name || '')).trim() || `ID: ${ticket.user_id}`;
+        const statusEmoji = ticket.status === 'OPEN' ? '🔴' : ticket.status === 'IN_PROGRESS' ? '🟡' : '🟢';
+        message += `${statusEmoji} <b>#${ticket.ticket_number}</b> - ${ticket.category || 'без категорії'}\n`;
+        message += `  Автор: ${owner}\n`;
+        message += `  ${ticket.description.substring(0, 50)}${ticket.description.length > 50 ? '...' : ''}\n\n`;
+      }
+
+      console.log('Sending search results...');
+      return ctx.reply(message, { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('Error searching tickets:', err.message, err.stack);
+      ctx.session.adminSearching = false;
+      return ctx.reply('❌ Помилка при пошуку тікетів: ' + err.message);
+    }
+  }
+
+  return next();
+});
+
+// обробка тексту під час створення тікета - NOW THIS IS SECOND
 bot.on('text', async (ctx, next) => {
   const { mode, step, ticketDraft } = ctx.session || {};
+  
+  // Skip if admin is searching for users
+  if (ctx.session && ctx.session.adminSearching) {
+    return next();
+  }
+  
   if (mode === 'create_ticket') {
     if (step === 'description') {
       ticketDraft.description = ctx.message.text.trim();
@@ -247,18 +363,20 @@ bot.action('FILE_SKIP', async (ctx) => {
   }
 });
 
-// Обробники перегляду тікетів — власні тікети користувача
-bot.action('VIEW_OPEN', async (ctx) => {
+// View active tickets (Open + In Progress combined)
+bot.action('VIEW_ACTIVE', async (ctx) => {
   await ctx.answerCbQuery();
   try {
-    const tickets = await listTicketsByUserAndStatus(ctx.from.id, 'Open');
-    if (!tickets || tickets.length === 0) return ctx.reply(formatTicketsList(tickets));
+    const openTickets = await listTicketsByUserAndStatus(ctx.from.id, 'Open');
+    const inProgressTickets = await listTicketsByUserAndStatus(ctx.from.id, 'In Progress');
+    const allActive = [...openTickets, ...inProgressTickets].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    for (const t of tickets) {
+    if (!allActive || allActive.length === 0) return ctx.reply('Активних тікетів не знайдено.');
+
+    for (const t of allActive) {
       const num = t.ticket_number || `#${t.id}`;
       const desc = (t.description || '').replace(/\n/g, ' ');
       const short = desc.length > 200 ? desc.slice(0, 197) + '...' : desc;
-      // owner display
       let ownerText = 'без даних';
       if (t.username) ownerText = `@${t.username}`;
       else if (t.first_name || t.last_name) ownerText = `${(t.first_name || '').trim()} ${(t.last_name || '').trim()}`.trim();
@@ -268,43 +386,18 @@ bot.action('VIEW_OPEN', async (ctx) => {
       await ctx.reply(text, ticketChangeKeyboard(t.id));
     }
   } catch (err) {
-    console.error('Error listing open tickets:', err);
+    console.error('Error listing active tickets:', err);
     await ctx.reply('Помилка при отриманні тікетів. Спробуйте пізніше.');
   }
 });
 
-bot.action('VIEW_IN_PROGRESS', async (ctx) => {
-  await ctx.answerCbQuery();
-  try {
-    const tickets = await listTicketsByUserAndStatus(ctx.from.id, 'In Progress');
-    if (!tickets || tickets.length === 0) return ctx.reply(formatTicketsList(tickets));
-
-    for (const t of tickets) {
-      const num = t.ticket_number || `#${t.id}`;
-      const desc = (t.description || '').replace(/\n/g, ' ');
-      const short = desc.length > 200 ? desc.slice(0, 197) + '...' : desc;
-      // owner display
-      let ownerText = 'без даних';
-      if (t.username) ownerText = `@${t.username}`;
-      else if (t.first_name || t.last_name) ownerText = `${(t.first_name || '').trim()} ${(t.last_name || '').trim()}`.trim();
-      else if (t.user_id) ownerText = `id:${t.user_id}`;
-
-      const text = `${num} — ${t.status}\n${short}\nВласник: ${ownerText} (id:${t.user_id || t.userId || t.user_id})`;
-      await ctx.reply(text, ticketChangeKeyboard(t.id));
-    }
-  } catch (err) {
-    console.error('Error listing in-progress tickets:', err);
-    await ctx.reply('Помилка при отриманні тікетів. Спробуйте пізніше.');
-  }
-});
-
-bot.action('VIEW_DONE', async (ctx) => {
+// View closed tickets
+bot.action('VIEW_CLOSED', async (ctx) => {
   await ctx.answerCbQuery();
   try {
     const tickets = await listTicketsByUserAndStatus(ctx.from.id, 'Done');
-    if (!tickets || tickets.length === 0) return ctx.reply(formatTicketsList(tickets));
+    if (!tickets || tickets.length === 0) return ctx.reply('Закритих тікетів не знайдено.');
 
-    // helper to escape for HTML
     const escapeHtml = (s) => {
       if (!s && s !== 0) return '';
       return String(s)
@@ -324,17 +417,60 @@ bot.action('VIEW_DONE', async (ctx) => {
 
       const ownerId = escapeHtml(t.user_id || t.userId || '');
 
-      return `<b>${num}</b> — <i>${status}</i>\n` +
-        `${desc ? `<code>${desc}</code>\n` : ''}` +
-        `<small>Власник: ${ownerText} (id:${ownerId})</small>`;
+      return `<b>${num}</b> — <i>${status}</i>\n${desc ? `<code>${desc}</code>\n` : ''}Власник: ${ownerText} (id:${ownerId})`;
     });
 
-    const message = items.join('\n\n────────────────\n\n');
+    // Split into multiple messages if too long (Telegram limit: 4096 chars)
+    let currentMessage = '<b>✔️ Закриті тікети:</b>\n\n';
+    let messageCount = 0;
 
-    await ctx.replyWithHTML(message);
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const separator = i < items.length - 1 ? '\n────────────────\n' : '';
+      const potentialMessage = currentMessage + item + separator;
+
+      if (potentialMessage.length > 3800) {
+        // Send current message and start new one
+        if (currentMessage !== '<b>✔️ Закриті тікети:</b>\n\n') {
+          await ctx.replyWithHTML(currentMessage);
+          messageCount++;
+        }
+        currentMessage = item + separator;
+      } else {
+        currentMessage = potentialMessage;
+      }
+    }
+
+    // Send the last message
+    if (currentMessage !== '<b>✔️ Закриті тікети:</b>\n\n') {
+      await ctx.replyWithHTML(currentMessage);
+      messageCount++;
+    }
+
+    if (messageCount === 0) {
+      await ctx.reply('Закритих тікетів не знайдено.');
+    }
   } catch (err) {
-    console.error('Error listing done tickets:', err);
+    console.error('Error listing closed tickets:', err);
     await ctx.reply('Помилка при отриманні тікетів. Спробуйте пізніше.');
+  }
+});
+
+// Admin: view user's tickets
+bot.command('user_tickets', async (ctx) => {
+  if (!ADMIN_IDS.includes(ctx.from.id)) {
+    return ctx.reply('Немає доступу');
+  }
+  const userId = parseInt(ctx.message.text.split(' ')[1], 10);
+  if (!userId) return ctx.reply('Використовуйте: /user_tickets <user_id>');
+  
+  try {
+    const tickets = await listTicketsByUser(userId);
+    if (!tickets || tickets.length === 0) return ctx.reply(`Тікетів для користувача ${userId} не знайдено.`);
+    await ctx.reply(`Тікети користувача ${userId}: ${tickets.length} шт.`);
+  } catch (err) {
+    console.error('Error in user_tickets:', err);
+    await ctx.reply('Помилка');
   }
 });
 
@@ -366,26 +502,31 @@ bot.action(/SETSTATUS_(\d+)_(OPEN|IN_PROGRESS|DONE)/, async (ctx) => {
 
     // update support chat message if exists
     if (updatedTicket.support_chat_message_id) {
-      const ticketNumber = updatedTicket.ticket_number || `#${updatedTicket.id}`;
-      const takerText = `@${ctx.from.username || 'без username'} (id: ${ctx.from.id})`;
-      const statusEmoji = newStatus === 'In Progress' ? '🔵' : newStatus === 'Done' ? '🟢' : '🟡';
-      const baseText =
-        `🆕 НОВИЙ ТІКЕТ #${ticketNumber}\n` +
-        `👤 Користувач: @${updatedTicket.username || 'без username'} (id: ${updatedTicket.user_id})\n` +
-        `🏷️ Категорія: ${updatedTicket.category || '—'}\n` +
-        `📝 Опис: ${updatedTicket.description}\n` +
-        `📎 Вкладень: (див. нижче в чаті)\n` +
-        `Статус: ${statusEmoji} ${newStatus}`;
+      try {
+        const ticketNumber = updatedTicket.ticket_number || `#${updatedTicket.id}`;
+        const takerText = `@${ctx.from.username || 'без username'} (id: ${ctx.from.id})`;
+        const statusEmoji = newStatus === 'In Progress' ? '🔵' : newStatus === 'Done' ? '🟢' : '🟡';
+        const baseText =
+          `🆕 НОВИЙ ТІКЕТ #${ticketNumber}\n` +
+          `👤 Користувач: @${updatedTicket.username || 'без username'} (id: ${updatedTicket.user_id})\n` +
+          `🏷️ Категорія: ${updatedTicket.category || '—'}\n` +
+          `📝 Опис: ${updatedTicket.description}\n` +
+          `📎 Вкладень: (див. нижче в чаті)\n` +
+          `Статус: ${statusEmoji} ${newStatus}`;
 
-      const takerLine = newStatus === 'In Progress' ? `\n🛠️ Взяв: ${takerText}` : newStatus === 'Done' ? `\n✅ Закрив: ${takerText}` : '';
+        const takerLine = newStatus === 'In Progress' ? `\n🛠️ Взяв: ${takerText}` : newStatus === 'Done' ? `\n✅ Закрив: ${takerText}` : '';
 
-      await ctx.telegram.editMessageText(
-        SUPPORT_CHAT_ID,
-        updatedTicket.support_chat_message_id,
-        null,
-        baseText + takerLine,
-        ticketStatusKeyboard(ticketId)
-      );
+        await ctx.telegram.editMessageText(
+          SUPPORT_CHAT_ID,
+          updatedTicket.support_chat_message_id,
+          null,
+          baseText + takerLine,
+          ticketStatusKeyboard(ticketId)
+        );
+      } catch (editErr) {
+        console.error('Error editing support message:', editErr.message);
+        // Continue without failing - message may have been deleted
+      }
     }
 
     // notify ticket owner
@@ -407,7 +548,10 @@ bot.action(/VIEW_ORIGINAL_(\d+)/, async (ctx) => {
 
   try {
     const ticket = await getTicketById(ticketId);
-    if (!ticket) return ctx.answerCbQuery('Тікет не знайдено');
+    if (!ticket) {
+      await ctx.answerCbQuery('Тікет не знайдено');
+      return;
+    }
 
     if (!ticket.support_chat_message_id) {
       await ctx.answerCbQuery('Оригінал не знайдено в каналі');
@@ -415,10 +559,16 @@ bot.action(/VIEW_ORIGINAL_(\d+)/, async (ctx) => {
     }
 
     // forward the support message into the current chat
-    await ctx.telegram.forwardMessage(ctx.chat.id, SUPPORT_CHAT_ID, ticket.support_chat_message_id);
-    await ctx.answerCbQuery();
+    try {
+      const supportChatId = parseInt(SUPPORT_CHAT_ID, 10);
+      await ctx.telegram.forwardMessage(ctx.chat.id, supportChatId, ticket.support_chat_message_id);
+      await ctx.answerCbQuery();
+    } catch (forwardErr) {
+      console.error('Error forwarding message:', forwardErr.message);
+      await ctx.answerCbQuery('Повідомлення було видалено або недоступне');
+    }
   } catch (err) {
-    console.error('Error forwarding original message:', err);
+    console.error('Error viewing original message:', err);
     await ctx.answerCbQuery('Не вдалося переглянути оригінал');
   }
 });
@@ -478,13 +628,18 @@ bot.action(/STATUS_(\d+)_(IN_PROGRESS|DONE)/, async (ctx) => {
     const originalText = baseText + takerLine;
 
     if (updatedTicket.support_chat_message_id) {
-      await ctx.telegram.editMessageText(
-        SUPPORT_CHAT_ID,
-        updatedTicket.support_chat_message_id,
-        null,
-        originalText,
-        ticketStatusKeyboard(ticketId)
-      );
+      try {
+        await ctx.telegram.editMessageText(
+          SUPPORT_CHAT_ID,
+          updatedTicket.support_chat_message_id,
+          null,
+          originalText,
+          ticketStatusKeyboard(ticketId)
+        );
+      } catch (editErr) {
+        console.error('Error editing support message:', editErr.message);
+        // Continue without failing - message may have been deleted
+      }
     }
 
     // повідомлення користувачу (включає, хто взяв/закрив)
@@ -497,5 +652,42 @@ bot.action(/STATUS_(\d+)_(IN_PROGRESS|DONE)/, async (ctx) => {
   } catch (err) {
     console.error('Error updating status:', err);
     await ctx.answerCbQuery('Помилка при оновленні статусу');
+  }
+});
+
+// Admin: view all tickets
+bot.action('ADMIN_ALL_TICKETS', async (ctx) => {
+  await ctx.answerCbQuery();
+  
+  if (!ADMIN_IDS.includes(ctx.from.id)) {
+    return ctx.reply('Немає доступу');
+  }
+
+  try {
+    const db = getDb();
+    const tickets = db.prepare(`
+      SELECT id, ticket_number, user_id, username, first_name, last_name, category, description, status, created_at
+      FROM tickets
+      ORDER BY created_at DESC
+      LIMIT 50
+    `).all();
+
+    if (!tickets || tickets.length === 0) {
+      return ctx.reply('Тікетів не знайдено.');
+    }
+
+    let message = '📋 <b>Всі тікети:</b>\n\n';
+    for (const ticket of tickets) {
+      const owner = ticket.username ? `@${ticket.username}` : (ticket.first_name || ticket.last_name || `ID: ${ticket.user_id}`);
+      const statusEmoji = ticket.status === 'OPEN' ? '🔴' : ticket.status === 'IN_PROGRESS' ? '🟡' : '🟢';
+      message += `${statusEmoji} <b>#${ticket.ticket_number}</b> - ${ticket.category}\n`;
+      message += `  Автор: ${owner}\n`;
+      message += `  ${ticket.description.substring(0, 50)}${ticket.description.length > 50 ? '...' : ''}\n\n`;
+    }
+
+    await ctx.reply(message, { parse_mode: 'HTML' });
+  } catch (err) {
+    console.error('Error fetching all tickets:', err);
+    await ctx.answerCbQuery('Помилка при завантаженні тікетів');
   }
 });

@@ -1,8 +1,15 @@
 import { Markup } from 'telegraf';
 
+const ADMIN_IDS = [8469943654, 396862984];
+
 export const mainMenuKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('🆕 Створити тікет', 'CREATE_TICKET')],
   [Markup.button.callback('📂 Мої тікети', 'VIEW_TICKETS_MENU')]
+]);
+
+export const ticketsMenuKeyboard = Markup.inlineKeyboard([
+  [Markup.button.callback('✅ Активні', 'VIEW_ACTIVE')],
+  [Markup.button.callback('✔️ Закриті', 'VIEW_CLOSED')]
 ]);
 
 export const categoryKeyboard = Markup.inlineKeyboard([
@@ -21,10 +28,18 @@ export const fileKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('Пропустити', 'FILE_SKIP')]
 ]);
 
-export const ticketsFilterKeyboard = Markup.inlineKeyboard([
-  [Markup.button.callback('Відкриті', 'VIEW_OPEN'), Markup.button.callback('Взяті в роботу', 'VIEW_IN_PROGRESS')],
-  [Markup.button.callback('Зроблені', 'VIEW_DONE')]
+export const adminMenuKeyboard = Markup.inlineKeyboard([
+  [Markup.button.callback('👥 Всі тікети', 'ADMIN_ALL_TICKETS')],
+  [Markup.button.callback('🔍 Пошук по юзеру', 'ADMIN_USER_SEARCH')]
 ]);
+
+export const adminStartKeyboard = Markup.inlineKeyboard([
+  [Markup.button.callback('📊 Адмін-панель', 'ADMIN_PANEL')],
+  [Markup.button.callback('🆕 Створити тікет', 'CREATE_TICKET')],
+  [Markup.button.callback('📂 Мої тікети', 'VIEW_TICKETS_MENU')]
+]);
+
+export { ADMIN_IDS };
 
 export function ticketStatusKeyboard(ticketId) {
   return Markup.inlineKeyboard([

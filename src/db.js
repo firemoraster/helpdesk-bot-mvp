@@ -1,9 +1,18 @@
 import sqlite3 from 'sqlite3';
+import Database from 'better-sqlite3';
 import { DATABASE_FILE } from './config.js';
 
 sqlite3.verbose();
 
 export const db = new sqlite3.Database(DATABASE_FILE);
+
+let syncDb = null;
+export function getDb() {
+  if (!syncDb) {
+    syncDb = new Database(DATABASE_FILE);
+  }
+  return syncDb;
+}
 
 export function initDb() {
   db.serialize(() => {
