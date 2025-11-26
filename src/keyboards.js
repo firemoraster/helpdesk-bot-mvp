@@ -39,6 +39,18 @@ export const adminStartKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('📂 Мої тікети', 'VIEW_TICKETS_MENU')]
 ]);
 
+// ReplyKeyboardMarkup - постійні кнопки внизу чату для звичайних користувачів
+export const mainReplyKeyboard = Markup.keyboard([
+  ['🆕 Створити тікет', '📂 Мої тікети'],
+  ['❓ Довідка']
+], { resize_keyboard: true, one_time_keyboard: false });
+
+// ReplyKeyboardMarkup - постійні кнопки для адмінів
+export const adminReplyKeyboard = Markup.keyboard([
+  ['🆕 Створити тікет', '📂 Мої тікети'],
+  ['📊 Адмін-панель', '❓ Довідка']
+], { resize_keyboard: true, one_time_keyboard: false });
+
 export { ADMIN_IDS };
 
 export function ticketStatusKeyboard(ticketId) {

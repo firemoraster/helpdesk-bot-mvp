@@ -1,6 +1,6 @@
 import { Telegraf, session } from 'telegraf';
 import { BOT_TOKEN, SUPPORT_CHAT_ID } from './config.js';
-import { mainMenuKeyboard, categoryKeyboard, ticketStatusKeyboard, fileKeyboard, ticketsMenuKeyboard, ticketChangeKeyboard, adminMenuKeyboard, adminStartKeyboard, ADMIN_IDS } from './keyboards.js';
+import { mainMenuKeyboard, categoryKeyboard, ticketStatusKeyboard, fileKeyboard, ticketsMenuKeyboard, ticketChangeKeyboard, adminMenuKeyboard, adminStartKeyboard, ADMIN_IDS, mainReplyKeyboard, adminReplyKeyboard } from './keyboards.js';
 import { createTicket, updateTicketStatus, setSupportMessageId, getTicketById, listTicketsByUserAndStatus, listTicketsByUser, listTicketsByUsername } from './ticketService.js';
 import { getDb } from './db.js';
 
@@ -22,10 +22,10 @@ function resetSession(ctx) {
 bot.start(async (ctx) => {
   resetSession(ctx);
   const isAdmin = ADMIN_IDS.includes(ctx.from.id);
-  const keyboard = isAdmin ? adminStartKeyboard : mainMenuKeyboard;
+  const keyboard = isAdmin ? adminReplyKeyboard : mainReplyKeyboard;
   const message = isAdmin 
     ? '👋 Вітаємо, адміністратор!\nОберіть дію:'
-    : '👋 Вітаємо в технічній підтримці!\nЩоб створити запит, натисніть кнопку нижче.';
+    : '👋 Вітаємо в технічній підтримці!\nОберіть дію:';
   await ctx.reply(message, keyboard);
 });
 
@@ -50,6 +50,18 @@ bot.command('admin', async (ctx) => {
     return ctx.reply('Немає доступу');
   }
   await ctx.reply('📊 Адмін-панель:', adminMenuKeyboard);
+});
+
+// Help command
+bot.command('help', async (ctx) => {
+  await ctx.reply(
+    '❓ <b>Довідка:</b>\n\n' +
+    '🆕 <b>Створити тікет</b> — надіслати запит в техпідтримку\n' +
+    '📂 <b>Мої тікети</b> — переглянути активні та закриті запити\n' +
+    '📊 <b>Адмін-панель</b> — управління тікетами (тільки для адмінів)\n\n' +
+    '<i>Все доступно з кнопок унизу чату або меню команд (/ або іконка)</i>',
+    { parse_mode: 'HTML' }
+  );
 });
 
 // Show menu to view own tickets
@@ -118,6 +130,41 @@ bot.action('ADMIN_USER_SEARCH', async (ctx) => {
   console.log('Admin search initiated, adminSearching set to:', ctx.session.adminSearching);
   
   await ctx.reply('🔍 Введіть нік, ім\'я або ID користувача:');
+});
+
+// Обработка текстовых кнопок главного меню
+bot.hears('🆕 Створити тікет', async (ctx) => {
+  resetSession(ctx);
+  ctx.session.mode = 'create_ticket';
+  ctx.session.step = 'description';
+  ctx.session.ticketDraft = {
+    description: '',
+    category: null,
+    files: []
+  };
+  await ctx.reply('📝 Опишіть, будь ласка, вашу проблему максимально детально.');
+});
+
+bot.hears('📂 Мої тікети', async (ctx) => {
+  return ctx.reply('Оберіть список своїх тікетів:', ticketsMenuKeyboard);
+});
+
+bot.hears('📊 Адмін-панель', async (ctx) => {
+  if (!ADMIN_IDS.includes(ctx.from.id)) {
+    return ctx.reply('Немає доступу');
+  }
+  await ctx.reply('📊 Адмін-панель:', adminMenuKeyboard);
+});
+
+bot.hears('❓ Довідка', async (ctx) => {
+  await ctx.reply(
+    '❓ <b>Довідка:</b>\n\n' +
+    '🆕 <b>Створити тікет</b> — надіслати запит в техпідтримку\n' +
+    '📂 <b>Мої тікети</b> — переглянути активні та закриті запити\n' +
+    '📊 <b>Адмін-панель</b> — управління (тільки для адмінів)\n\n' +
+    '<i>Все доступно з кнопок унизу чату</i>',
+    { parse_mode: 'HTML' }
+  );
 });
 
 // Handle search input for admin search - MUST BE BEFORE generic text handler
